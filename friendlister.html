@@ -1,0 +1,434 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en" xmlns:fb="http://www.facebook.com/2008/fbml">
+<head>
+	<title>FB FriendList Hackamathingie</title>
+  <script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/jquery/1.7.2/jquery.min.js"></script>
+  
+  <style>
+    body {
+      padding: 15px;
+    }
+    .button {
+      width: 150px;
+      float: left;
+      margin-bottom: 10px;
+    }
+    .button a {
+      -moz-border-radius: 5px;
+      border-radius: 5px;
+      background-color: #A7C3FF;
+      border: 1px solid #3B5998;
+      padding: 5px;
+      width: 80px;
+      color: black;
+      text-decoration: none;
+    }
+    .button.disabled a {
+      opacity: 0.5;
+      cursor: default;
+    }
+    .list_container {
+      min-width: 200px;
+      float: left;
+      padding: 5px;
+      margin: 5px;
+    }
+    .userpic {
+      padding: 4px;
+    }
+    li {
+      clear: both;
+      margin-top: 10px;
+    }
+    .clear { clear: both; }
+  </style>
+  
+  <script type="text/javascript">
+    //<![CDATA[
+    /*
+     * Set up 3rd party stuff, utility functions, kitchen sinks, etc.
+     */
+    $("#logger").append("Waiting for Facebook to load... ");
+    window.fbAsyncInit = function() {
+      FB.init({
+        appId: '231975683587509', 
+        status: true, 
+        cookie: true, 
+        xfbml: true,
+        oauth: true
+      });
+      if (typeof(window['onFBLoadComplete'])=="function") onFBLoadComplete();
+    };
+    jQuery(document).ready(function() {
+      (function() {
+        var e = document.createElement('script');
+        e.async = true;
+        var proto = (document.location.protocol=="http:"||document.location.protocol=="https:" ? document.location.protocol : "http:");
+        e.src = proto + '//connect.facebook.net/en_US/all.js';
+        document.getElementById('fb-root').appendChild(e);
+      }());
+    });
+    
+    /* IE, you're dumb. */
+    if (typeof console == "undefined"){
+      this.console = {log:function(data){alert(data);}};
+    }
+    
+    //Just so we can have a pretty spinner
+    $.fn.spin = function(opts) {
+      this.each(function() {
+        var $this = $(this),
+            data = $this.data();
+    
+        if (data.spinner) {
+          data.spinner.stop();
+          delete data.spinner;
+        }
+        if (opts !== false) {
+          data.spinner = new Spinner($.extend({color: $this.css('color')}, opts)).spin(this);
+        }
+      });
+      return this;
+    };
+    $.fn.stop_spinning = function(opts) {
+        this.each(function() {
+            var $this = $(this),
+            data = $this.data();
+    
+            if (data.spinner) {
+                data.spinner.stop();
+                delete data.spinner;
+            }
+        });
+        return this;
+    };
+    //]]>
+  </script>
+  <script type="text/javascript">
+    //<![CDATA[
+      jQuery(document).ready(function() {
+        $(".member_of_1,.member_of_2").live('click',function(){
+          var new_user = $(this).clone();
+          new_user.attr('class', 'member_of_result');
+          $("#list_result_victims").append(new_user);
+        });
+        $(".member_of_result").live('click',function(){
+          $(this).remove();
+        });
+      });
+      
+      // Ahhhhhhhhhh.
+      var list_1 = {};
+      var list_2 = {};
+      var list_result = {};
+      var loaded = {1:false, 2:false};
+      var new_list_id = false;
+      
+      function onFBLoadComplete(){
+        $("#logger").append("FB object loaded!</br>");
+        $("#step_1").removeClass("disabled");
+        $("#step_4").removeClass("disabled");
+        $("#step_5").removeClass("disabled");
+      }
+      
+      /*
+       * Our functions
+       */
+      var permissionsRequired = ["read_friendlists", "manage_friendlists", "user_relationships", "friends_birthday"];
+      function loginFB(callback){
+        FB.login(callback, {scope:permissionsRequired.join(",")});
+        FB.Event.subscribe('auth.authResponseChange', function(response) {
+          $("#logger").append('The status of the session is: ' + response.status);
+        });
+      }
+      
+      function checkFB(response){
+        $("#fb_connect_status").empty();
+        $("#fb_connect_status").append("Connecting to facebook...</br>");
+        if (typeof(response) == "undefined")
+          response = FB.getAuthResponse();
+        if (!response){
+          $("#fb_connect_status").append("Not authorized yet.  Prompting...</br>");
+          loginFB(checkFB);
+          return false;
+        }
+        $("#fb_connect_status").append("Checking permissions...</br>");
+        
+        FB.api('/me/permissions', function(response){
+          if (response.data && response.data[0]){
+            for (var x in permissionsRequired){
+              if (!response.data[0][permissionsRequired[x]] || response.data[0][permissionsRequired[x]] != 1){
+                $("#fb_connect_status").append("Missing permission "+permissionsRequired[x]+" (Trying to pop up the permissions dialog box - popup blocked?  <a href='#' onclick='loginFB();'>Click here to try again.</a>)</br>");
+                loginFB(checkFB);
+                return false;
+              }
+            }
+          } else {
+            $("#fb_connect_status").append("Unexpected response checking for permissions.  Check console</br>");
+            loginFB(getFBSession);
+            return false;
+          }
+          
+          $("#fb_connect_status").append("Permissions good to go!</br>");
+          
+          retrieveFriendsList();
+        });
+      }
+      
+      function retrieveFriendsList(){
+        $("#list_1").empty();
+        $("#list_2").empty();
+        $("#target_list").empty();
+        FB.api('/me/friendlists', function(response){
+          if (response.data){
+            if (response.data.length == 0){
+              $("#fb_list_status").append("You don't have friend lists?  o.O<br/>");
+              return false;
+            }
+            var lists = response.data;
+            for (var x in lists){
+              var list = $(document.createElement("option")).val(lists[x]['id']).html(lists[x]['name']);
+              $("#list_1").append(list);
+              $("#list_2").append(list.clone());
+              $("#target_list").append(list.clone());
+            }
+            if (new_list_id){
+              $("#target_list [value="+new_list_id+"]").prop("selected", true);
+            }
+          } else {
+            if (response.error){
+              $("#fb_list_status").append("Ack, something broke. Fb response: "+response.error);
+            } else {
+              $("#fb_list_status").append("Ack, something broke. Check the js console");
+              console.log(response);
+            }
+          }
+        });
+      }
+      
+      function doListStuff(){
+        //Reset!
+        $("#fb_list_status").empty();
+        $("#list_1_victims").empty();
+        $("#list_2_victims").empty();
+        $("#list_1_count").text(0);
+        $("#list_2_count").text(0);
+        $("#list_result_count").text(0);
+        $("#list_result_victims").empty();
+        list_1 = {};
+        list_2 = {};
+        list_result = {};
+        loaded = {1:false, 2:false};
+        
+        $("#fb_list_status").append("Retrieving list data from Facebook...<br/>");
+        var list_id = $("#list_1").val();
+        $("#fb_list_status").append(" List 1: ID="+list_id+"<br/>");
+        FB.api('/'+list_id+"/members", function(response){
+          if (response.data && response.data.length == 0){
+            $("#fb_list_status").append("Oh dear, you don't have friends.... in that list, we mean.  Why don't you pick a different one and try again, eh?<br/>");
+            return false;
+          }
+          handleListResponse(response, 1);
+        });
+        var list_id = $("#list_2").val();
+        $("#fb_list_status").append(" List 2: ID="+list_id+"<br/>");
+        FB.api('/'+list_id+"/members", function(response){
+          if (response.data && response.data.length == 0){
+            $("#fb_list_status").append("Oh dear, you don't have friends.... in that list, we mean.  Why don't you pick a different one and try again, eh?<br/>");
+            return false;
+          }
+          handleListResponse(response, 2);
+        });
+      }
+      function handleListResponse(response, list_number){
+        if (response.data){
+          if (response.data.length == 0){
+            $("#fb_list_status").append("End of list "+list_number+" found<br/>");
+            loadComplete(list_number);
+            return false;
+          }
+          var action = $("#action").val();
+          var victims = response.data;
+          var target = $("#list_"+list_number+"_victims");
+          for (var x in victims){
+            window['list_'+list_number][victims[x]['id']] = victims[x]['name'];
+            target.append(makeUser(victims[x]['id'], victims[x]['name'], "member_of_"+list_number));
+            if (action == "union"){
+              list_result[victims[x]['id']] = victims[x]['name'];
+            }
+            if (action == "intersection" || action == "complement"){
+              if ( (list_number == 1 && list_2[victims[x]['id']])
+                  || (list_number == 2 && list_1[victims[x]['id']]) ){
+                //Might have an race conditions here.
+                list_result[victims[x]['id']] = victims[x]['name'];
+              }
+            }
+            if (action == "xor"){
+              if (list_result[victims[x]['id']]){
+                delete list_result[victims[x]['id']];
+              } else {
+                list_result[victims[x]['id']] = victims[x]['name'];
+              }
+            }
+          }
+          if (response.paging.next){
+            FB.api(response.paging.next.replace("https://graph.facebook.com",""), function(response){
+              handleListResponse(response, list_number)
+            });
+          }
+        } else {
+          if (response.error){
+            $("#fb_list_status").append("Ack, something broke. Fb response: "+response.error);
+          } else {
+            $("#fb_list_status").append("Ack, something broke. Check the js console");
+            console.log(response);
+          }
+        }
+      }
+      function makeUser(id, name, class_name){
+        return $(document.createElement("div")).addClass(class_name).attr('fbid', id).append(
+            $(document.createElement("img")).attr({'class':'userpic','src':"https://graph.facebook.com/"+id+"/picture"}), 
+            $(document.createElement("a")).attr({'class':'name', 'href':'https://www.facebook.com/profile.php?id='+id}).html(name)
+          );
+      }
+      
+      function loadComplete(list_number){
+        loaded[list_number] = true;
+        $("#list_"+list_number+"_count").text($("#list_"+list_number+"_victims").children().length);
+        if (loaded[1] && loaded[2]){
+          doStuff();
+        }
+      }
+      
+      function doStuff(){
+        var action = $("#action").val();
+        if (action == "complement"){
+          var list_copy = jQuery.extend(true, {}, list_1); //jQuery Cloooone!
+          for (var x in list_result){
+            if (list_copy[x]) delete list_copy[x];
+          }
+          list_result = list_copy;
+        }
+        var target = $("#list_result_victims");
+        for (var x in list_result){
+          target.append(makeUser(x, list_result[x], "member_of_result"));
+        }
+        $("#list_result_count").text($("#list_result_victims").children().length);
+      }
+      
+      function createList(){
+        $("#create_list_status").empty();
+        var list_name = $("#new_list_name").val();
+        FB.api('/me/friendlists', 'post', {'name':list_name}, function(response){
+          if (response.id){
+            new_list_id = response.id;
+            $("#create_list_status").append("Successfully create new list.  List ID is "+new_list_id+"<br/>");
+            $("#create_list_status").append("Refreshing lists...<br/>");
+            retrieveFriendsList();
+          } else {
+            if (response.error){
+              $("#create_list_status").append("Ack, something broke. Fb response: "+response.error);
+            } else {
+              $("#create_list_status").append("Ack, something broke. Check the js console");
+              console.log(response);
+            }
+          }
+        });
+      }
+      
+      function saveList(){
+        var target_list_id = $("#target_list").val();
+        $("#list_result_victims").children().each(function(x,e){
+          var id = $(this).attr('fbid');
+          var meh = function(response){
+            if (response.error){
+              $("#save_list_status").append("Ack, something broke. Fb response: "+response.error+"<br/>");
+            }
+            if (response === true){
+              $("#save_list_status").append("Added "+id+" to list.<br/>");
+            } else {
+              $("#save_list_status").append("Unexpected response when adding "+id+" to list.  Check console.<br/>");
+              console.log(response);
+            }
+          };
+          FB.api('/'+target_list_id+'/members/'+id, 'post', meh);
+        });
+      }
+      
+      jQuery(document).ready(function() {
+        $(".list").bind("change", function(){
+          if ($("#list_1").val() != $("#list_2").val())
+            $("#step_2").removeClass("disabled");
+          else
+            $("#step_2").addClass("disabled");
+        });
+      });
+    //]]>
+  </script>
+</head>
+<body>
+<h1 style="color:red;">Disclaimer: this ain't pretty.</h1>
+<p>I wrote this because a friend of mine wondered if it would be possible to do slightly more advanced things with Facebook's smart friendlists.  I figured I'd try to throw something together to do that.</p>
+
+<ol>
+  <li>
+    <div id="step_1" class="button disabled"><a href="#" onclick="checkFB();return false;">Connect!</a></div>
+    <div style="float:left;width:70%;">Connect to Facebook so we can <s>steal all of your information and stalk your friends</s> access your friends lists. (<a href="#" onclick="FB.logout();return false;">Need to logout of Facebook? Click here.</a>).<br/>
+    <small>Note: we ask for relationship status and friends_birthdays in order to access smartlists like the Family smartlist (which is empty otherwise, for privacy reasons - <a href="https://developers.facebook.com/bugs/293822180653554?browse=search_4ef2dbd24d7010960277151">bug report related to this</a>).</small></div>
+    <div id="fb_connect_status" class="clear" style="padding-left:15px;color:grey;">
+      
+    </div>
+  </li>
+  <li>
+    <div id="step_2" class="button disabled"><a href="#" onclick="doListStuff();return false;">Go!</a></div>
+    <div style="float:left;width:70%;">
+      Pick lists to do stuff with:<br/>
+      <select id="list_1" class="list"></select>
+      <select id="action">
+        <option value="union">&cup; (union / OR)</option>
+        <option value="intersection">&cap; (intersection / AND)</option>
+        <option value="complement">- (complement / AND NOT)</option>
+        <option value="xor">&#x25b3; (symmetric difference / XOR)</option>
+      </select>
+      <select id="list_2" class="list"></select>
+    </div>
+    <div id="fb_list_status" class="clear" style="padding-left:15px;color:grey;"></div>
+  </li>
+  <li>
+    <div id="list_1_container" class="list_container">
+      <h3>List 1 (<span id="list_1_count">0</span>)</h3>
+      <div id="list_1_victims" class="list_victims"></div>
+    </div>
+    <div id="list_1_container" class="list_container">
+      <h3>List 2 (<span id="list_2_count">0</span>):</h3>
+      <div id="list_2_victims" class="list_victims"></div>
+    </div>
+    <div id="list_result_container" class="list_container">
+      <h3>New List (<span id="list_result_count">0</span>):</h3>
+      <div id="list_result_victims" class="list_victims"></div>
+    </div>
+    <div id="fb_list_member_status" class="clear" style="padding-left:15px;color:grey;"></div>
+  </li>
+  <li>
+    <div id="step_4" class="button disabled"><a href="#" onclick="createList();return false;">Create List!</a></div>
+    <div style="float:left;width:70%;">
+      (Optional) Enter a name for your new list: <input type="text" id="new_list_name" />
+    </div>
+    <div id="create_list_status" class="clear" style="padding-left:15px;color:grey;"></div>
+  </li>
+  <li>
+    <div id="step_5" class="button disabled"><a href="#" onclick="saveList();return false;">Save New List!</a></div>
+    <div style="float:left;width:70%;">
+      Click on people in the new list to remove them.  Click on people in the old list to add them.<br/>
+      Finally, pick where we should add everyone on the "New List" column: <select id="target_list" class="list"></select> <small><a href="#" onclick="retrieveFriendsList()">refresh</a></small>
+    </div>
+    <div id="save_list_status" class="clear" style="padding-left:15px;color:grey;"></div>
+  </li>
+</ol>
+
+<div id="logger" style="border:1px solid black;width:95%;position:relative;bottom:0px;max-height:5em;overflow:auto;color:grey;">
+  Logging other data here:<br/>
+</div>
+<div id="fb-root"></div>
+</body>
+</html>
